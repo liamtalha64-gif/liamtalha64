@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Secreenshot.com - Screen Recorder</title>
+  <link rel="icon" type="image/png" href="https://img.icons8.com/fluency/48/screenshot.png">
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; color: white; text-align: center; overflow: hidden; }
+    #bg-video { position: fixed; right: 0; bottom: 0; min-width: 100%; min-height: 100%; object-fit: cover; z-index: -1; }
+    .note { position: absolute; bottom: -50px; font-size: 2rem; animation: floatUp 6s linear infinite; color: gold; opacity: 0.7; }
+    @keyframes floatUp { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-110vh); opacity: 0; } }
+    .controls { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+    button { padding: 10px 16px; margin: 5px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; }
+    button.start { background: #28a745; color:white; }
+    button.stop { background: #dc3545; color:white; }
+    button.download { background: #007bff; color:white; }
+    button.snapshot { background: #ff9800; color:white; }
+    #preview { margin-top: 20px; width: 400px; max-width: 90%; border: 3px solid white; border-radius: 12px; }
+    #status { margin-top: 10px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <video autoplay muted loop id="bg-video">
+    <source src="https://cdn.pixabay.com/vimeo/26616/music-1739.mp4?width=640&hash=4f7e6ff4f2d706f88f4d52b2b6d57f8e83a77f46" type="video/mp4">
+  </video>
+
+  <!-- floating music emojis -->
+  <div class="note" style="left:20%;">🎵</div>
+  <div class="note" style="left:40%; animation-delay:2s;">🎶</div>
+  <div class="note" style="left:60%; animation-delay:4s;">🎤</div>
+  <div class="note" style="left:80%; animation-delay:1s;">🎧</div>
+
+  <!-- controls -->
+  <div class="controls">
+    <h2>📸 Secreenshot.com</h2>
+    <button class="start" onclick="startRecording()">Start Recording</button>
+    <button class="stop" onclick="stopRecording()" disabled>Stop & Save</button>
+    <button class="snapshot" onclick="takeSnapshot()" disabled>📸 Snapshot</button>
+    <br>
+    <button class="download" id="downloadMP4" style="display:none;">Download MP4</button>
+    <button class="download" id="downloadAVI" style="display:none;">Download AVI</button>
+    <div id="status"></div>
+    <video id="preview" autoplay muted></video>
+  </div>
+
+  <!-- FFmpeg -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
+  <script>
+    let mediaRecorder, recordedChunks = [], ffmpeg;
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        document.getElementById("preview").srcObject = stream;
+
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9,opus" });
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = convertToFormats;
+        mediaRecorder.start();
+
+        document.querySelector(".start").disabled = true;
+        document.querySelector(".stop").disabled = false;
+        document.querySelector(".snapshot").disabled = false;
+        document.getElementById("status").innerText = "Recording...";
+      } catch (err) {
+        alert("Permission denied or error: " + err);
+      }
+    }
+
+    function stopRecording() {
+      mediaRecorder.stop();
+      document.querySelector(".stop").disabled = true;
+      document.querySelector(".snapshot").disabled = true;
+      document.getElementById("status").innerText = "Processing video...";
+    }
+
+    async function convertToFormats() {
+      const blob = new Blob(recordedChunks, { type: "video/webm" });
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+
+      if (!ffmpeg) {
+        ffmpeg = FFmpeg.createFFmpeg({ log: true });
+        await ffmpeg.load();
+      }
+
+      ffmpeg.FS("writeFile", "input.webm", uint8Array);
+
+      // Convert to MP4
+      await ffmpeg.run("-i", "input.webm", "-c:v", "libx264", "-c:a", "aac", "output.mp4");
+      let mp4Data = ffmpeg.FS("readFile", "output.mp4");
+      let mp4Blob = new Blob([mp4Data.buffer], { type: "video/mp4" });
+      let mp4Url = URL.createObjectURL(mp4Blob);
+
+      const mp4Btn = document.getElementById("downloadMP4");
+      mp4Btn.style.display = "inline-block";
+      mp4Btn.onclick = () => downloadFile(mp4Url, "recording.mp4");
+
+      // Convert to AVI
+      await ffmpeg.run("-i", "input.webm", "-c:v", "mpeg4", "-c:a", "mp3", "output.avi");
+      let aviData = ffmpeg.FS("readFile", "output.avi");
+      let aviBlob = new Blob([aviData.buffer], { type: "video/x-msvideo" });
+      let aviUrl = URL.createObjectURL(aviBlob);
+
+      const aviBtn = document.getElementById("downloadAVI");
+      aviBtn.style.display = "inline-block";
+      aviBtn.onclick = () => downloadFile(aviUrl, "recording.avi");
+
+      document.getElementById("status").innerText = "Done! Choose a format to download.";
+      document.querySelector(".start").disabled = false;
+    }
+
+    function downloadFile(url, filename) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+    }
+
+    function takeSnapshot() {
+      const video = document.getElementById("preview");
+      if (!video.srcObject) return alert("No video stream available!");
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        downloadFile(url, "snapshot.png");
+      }, "image/png");
+    }
+  </script>
+</body>
+</html>
